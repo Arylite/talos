@@ -17,7 +17,7 @@ jobs:
         shell: msys2 {0}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Fails fast, before spending time on toolchain setup, if whoever
       # tagged this release forgot to bump TALOS_VERSION_STRING first.
