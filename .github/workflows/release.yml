@@ -85,7 +85,7 @@ jobs:
           Compress-Archive -Path "$stagingDir/*" -DestinationPath "$stagingDir.zip"
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: talos-${{ github.ref_name }}-win-x64.zip
           generate_release_notes: true
