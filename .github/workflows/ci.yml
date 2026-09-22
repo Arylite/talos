@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up MinGW-w64 toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            make
+
+      - name: Build static and shared libraries
+        run: make all
+
+      - name: Run native test suite
+        run: make test
+
+      # Talos must never gain a network dependency (see CLAUDE.md). A hosted
+      # runner can't meaningfully run with its network adapter disabled, so
+      # instead this asserts the built DLL imports no networking library at
+      # all, which is a stronger, CI-enforceable version of the same rule.
+      - name: Verify no networking dependencies
+        run: |
+          if objdump -p build/lib/talos.dll | grep -iE 'ws2_32|wininet|winhttp|urlmon|dnsapi|iphlpapi'; then
+            echo "talos.dll imports a networking library; Talos must remain 100% offline" >&2
+            exit 1
+          fi
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Build C# bindings
+        shell: pwsh
+        run: dotnet build bindings/csharp/Talos.Native/Talos.Native.csproj --configuration Release

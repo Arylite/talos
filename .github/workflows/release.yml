@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Fails fast, before spending time on toolchain setup, if whoever
+      # tagged this release forgot to bump TALOS_VERSION_STRING first.
+      - name: Verify tag matches TALOS_VERSION_STRING
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $expectedVersion = $tag -replace '^v', ''
+
+          $headerContent = Get-Content include/talos/talos.h -Raw
+          if ($headerContent -notmatch '#define TALOS_VERSION_STRING "([^"]+)"') {
+            Write-Error "Could not find TALOS_VERSION_STRING in include/talos/talos.h"
+            exit 1
+          }
+
+          $headerVersion = $Matches[1]
+          if ($headerVersion -ne $expectedVersion) {
+            Write-Error "Tag '$tag' does not match TALOS_VERSION_STRING '$headerVersion' in talos.h"
+            exit 1
+          }
+
+          Write-Host "Tag '$tag' matches TALOS_VERSION_STRING '$headerVersion'"
+
+      - name: Set up MinGW-w64 toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            make
+
+      - name: Build static and shared libraries
+        run: make all
+
+      - name: Run native test suite
+        run: make test
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Build C# bindings
+        shell: pwsh
+        run: dotnet build bindings/csharp/Talos.Native/Talos.Native.csproj --configuration Release
+
+      - name: Package release archive
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}"
+          $stagingDir = "talos-$version-win-x64"
+
+          New-Item -ItemType Directory -Force -Path "$stagingDir/lib" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$stagingDir/include/talos" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$stagingDir/bindings/csharp" | Out-Null
+
+          Copy-Item build/lib/talos.dll "$stagingDir/lib/"
+          Copy-Item build/lib/libtalos.a "$stagingDir/lib/"
+          Copy-Item build/lib/libtalos.dll.a "$stagingDir/lib/"
+          Copy-Item include/talos/talos.h "$stagingDir/include/talos/"
+          Copy-Item bindings/csharp/Talos.Native/bin/Release/net8.0/Talos.Native.dll "$stagingDir/bindings/csharp/"
+
+          Compress-Archive -Path "$stagingDir/*" -DestinationPath "$stagingDir.zip"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: talos-${{ github.ref_name }}-win-x64.zip
+          generate_release_notes: true
